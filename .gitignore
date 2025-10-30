@@ -1,2 +1,7 @@
 .venv/
 .env
+.env.local
+__pycache__/
+*.pyc
+rag_knowledge_base/
+sec-edgar-filings/

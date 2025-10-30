@@ -4,3 +4,14 @@ pydantic
 pydantic_ai
 yfinance
 google-genai
+requests
+
+# For parsing data and runtime
+pinecone
+grpcio
+sentence-transformers
+tqdm
+
+# NOTE: sentence-transformers requires a backend (torch or tensorflow).
+# On macOS install torch separately if needed, e.g.:
+#   python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
