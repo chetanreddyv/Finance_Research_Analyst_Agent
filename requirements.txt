@@ -1,0 +1,6 @@
+# For parsing data
+docling
+pydantic
+pydantic_ai
+yfinance
+google-genai
