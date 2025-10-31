@@ -80,30 +80,27 @@ Below is a technical flow diagram that visualizes the pipeline end-to-end. It hi
 └─────────────────────────────────────────────────────────────────┘
 
 ```mermaid
-```mermaid
 flowchart TD
-    A["Unstructured Documents<br>(PDFs, DOCX, PPTX, Images, SEC Edgar)"] --> B["Docling / Doc Processor<br>Native PDF parsing · layout & table extraction · chunking"]
-    B --> C["Structured Document Chunks<br>JSON/Markdown chunks with metadata"]
-    C --> D["Embedding & Storage<br>sentence-transformers → vectors · Pinecone storage"]
-    D --> E["Retrieval / RAG Layer<br>Query → embed → vector search (filter by ticker/form/date)"]
-    E --> F["Planner & Tool Orchestration<br>Planner LLM selects sources; tools: yfinance, Tavily, SEC RAG tool"]
-    F --> G["Analyst LLM / Memo Generator<br>Synthesizes evidence into Investment Memo"]
-    G --> H["Outputs<br>CLI, JSON, dashboards, reports"]
-
-    %% Optional side flows (external data sources)
+    A["Unstructured Documents<br/>(PDFs, DOCX, PPTX, Images, SEC Edgar)"] --> B["Docling / Doc Processor<br/>Native PDF parsing, layout & table extraction, chunking"]
+    B --> C["Structured Document Chunks<br/>JSON/Markdown chunks with metadata"]
+    C --> D["Embedding & Storage<br/>sentence-transformers to vectors, Pinecone storage"]
+    D --> E["Retrieval / RAG Layer<br/>Query to embed to vector search (filter by ticker/form/date)"]
+    E --> F["Planner & Tool Orchestration<br/>Planner LLM selects sources; tools: yfinance, Tavily, SEC RAG tool"]
+    F --> G["Analyst LLM / Memo Generator<br/>Synthesizes evidence into Investment Memo"]
+    G --> H["Outputs<br/>CLI, JSON, dashboards, reports"]
+    
     subgraph DataSources[External Data Sources]
-        YF["YFinance<br>market metrics"]
-        TV["Tavily<br>news/search"]
-        EDGAR["SEC EDGAR<br>raw filings"]
+        YF["YFinance<br/>market metrics"]
+        TV["Tavily<br/>news/search"]
+        EDGAR["SEC EDGAR<br/>raw filings"]
     end
 
     YF --> F
     TV --> F
     EDGAR --> B
 
-    %% Styling helper
-    classDef infra fill:#f9f9f9,stroke:#333,stroke-width:1px;
-    class A,B,C,D,E,F,G,H infra;
+    classDef infra fill:#f9f9f9,stroke:#333,stroke-width:1px
+    class A,B,C,D,E,F,G,H infra
 ```
 
 Quick numbered steps for the same flow:
