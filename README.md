@@ -21,63 +21,6 @@ This repository contains the core orchestration, lightweight RAG (retrieval-augm
 
 Below is a technical flow diagram that visualizes the pipeline end-to-end. It highlights which components operate on documents, which store and index embeddings, where retrieval happens, and where LLM planning and analysis occur.
 
-┌─────────────────────────────────────────────────────────────────┐
-│              Unstructured Documents Input                       │
-│    (PDFs, DOCX, PPTX, Images, Scanned Documents, SEC Edgar)     |
-|      Sample used for MVP: Apple Inc. (AAPL) SEC EDGAR files     |
-|   10-K last 3yrs, 10-Q last 2yrs of quarters, 8-k recent events │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      DOCLING.                                   │
-│    • Native PDF parsing                                         │
-│    • Layout & table extraction                                  │
-│    • Chunking, segmentation, and semantic labeling              │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               STRUCTURED DOCUMENT CHUNKS                        │
-│                   RAG Ready Chunks                              │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      EMBEDDING & STORAGE                         │
-│    • Embed chunks with sentence-transformers(all-MiniLM-L6-v2)  │
-│    • Store vectors + metadata in Vector DB (Pinecone)            │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   RETRIEVAL / RAG LAYER                          │
-│    • Query → embed → vector search (filter by ticker/form/date)  │
-│    • Return top-N evidence snippets with metadata                │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                 PLANNER & TOOL ORCHESTRATION                      │
-│    • Planner LLM: parse user intent & select needed sources      │
-│    • Tools: market data (yfinance), news (Tavily), SEC RAG tool   │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               ANALYST LLM / MEMO GENERATOR                      │
-│    • Ingests evidence from RAG + market + news                  │
-│    • Produces structured Investment Memo (Executive Summary,    │
-│      Financial Analysis, Key Metrics, Risks, Catalysts)         │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         OUTPUTS                                 │
-│    • CLI printouts, JSON exports, downstream integrations       │
-│    • Optional: dashboards, alerts, and automated reports        │
-└─────────────────────────────────────────────────────────────────┘
-
 
 ```mermaid
 flowchart TD
