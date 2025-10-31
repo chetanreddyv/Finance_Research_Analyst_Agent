@@ -81,14 +81,20 @@ Below is a technical flow diagram that visualizes the pipeline end-to-end. It hi
 
 ```mermaid
 flowchart TD
-    A["Unstructured Documents<br/>(PDFs, DOCX, PPTX, Images, SEC Edgar)"] --> B["Docling / Doc Processor<br/>Native PDF parsing, layout & table extraction, chunking"]
-    B --> C["Structured Document Chunks<br/>JSON/Markdown chunks with metadata"]
-    C --> D["Embedding & Storage<br/>sentence-transformers to vectors, Pinecone storage"]
-    D --> E["Retrieval / RAG Layer<br/>Query to embed to vector search (filter by ticker/form/date)"]
-    E --> F["Planner & Tool Orchestration<br/>Planner LLM selects sources; tools: yfinance, Tavily, SEC RAG tool"]
-    F --> G["Analyst LLM / Memo Generator<br/>Synthesizes evidence into Investment Memo"]
-    G --> H["Outputs<br/>CLI, JSON, dashboards, reports"]
+    A["Unstructured Documents Input<br/>(PDFs, DOCX, PPTX, Images, Scanned Documents, SEC Edgar)<br/>Sample: Apple Inc. (AAPL) SEC EDGAR files<br/>10-K last 3yrs, 10-Q last 2yrs of quarters, 8-K recent events"] --> B["DOCLING<br/>- Native PDF parsing<br/>- Layout & table extraction<br/>- Chunking, segmentation, and semantic labeling"]
     
+    B --> C["Structured Document Chunks<br/>RAG Ready Chunks"]
+    
+    C --> D["Embedding & Storage<br/>- Embed chunks with sentence-transformers (all-MiniLM-L6-v2)<br/>- Store vectors + metadata in Vector DB (Pinecone)"]
+    
+    D --> E["Retrieval / RAG Layer<br/>- Query to embed to vector search (filter by ticker/form/date)<br/>- Return top-N evidence snippets with metadata"]
+    
+    E --> F["Planner & Tool Orchestration<br/>- Planner LLM: parse user intent & select needed sources<br/>- Tools: market data (yfinance), news (Tavily), SEC RAG tool"]
+    
+    F --> G["Analyst LLM / Memo Generator<br/>- Ingests evidence from RAG + market + news<br/>- Produces structured Investment Memo (Executive Summary,<br/>Financial Analysis, Key Metrics, Risks, Catalysts)"]
+    
+    G --> H["Outputs<br/>- CLI printouts, JSON exports, downstream integrations<br/>- Optional: dashboards, alerts, and automated reports"]
+
     subgraph DataSources[External Data Sources]
         YF["YFinance<br/>market metrics"]
         TV["Tavily<br/>news/search"]
@@ -97,7 +103,7 @@ flowchart TD
 
     YF --> F
     TV --> F
-    EDGAR --> B
+    EDGAR --> A
 
     classDef infra fill:#f9f9f9,stroke:#333,stroke-width:1px
     class A,B,C,D,E,F,G,H infra
