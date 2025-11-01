@@ -13,9 +13,9 @@ import asyncio
 load_dotenv()
 
 # API Keys and Configuration
-PINECONE_API_KEY = "xxxxxxxxx"
+PINECONE_API_KEY = "xxxxxxxxxx"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-TAVILY_API_KEY = "xxxxxxxxx"
+TAVILY_API_KEY = "xxxxxxxxxx"
 INDEX_NAME = "sec-rag"
 # Validate API keys
 api_key = os.getenv("OPENAI_API_KEY")
@@ -40,7 +40,7 @@ class AnalysisIntent(BaseModel):
     needs_sec_data: bool = Field(description="Whether SEC filing data is needed")
     needs_market_data: bool = Field(description="Whether market/valuation data is needed")
     needs_news: bool = Field(description="Whether news data is needed")
-    execution_plan: str = Field(description="Step-by-step plan for data gathering")
+    execution_plan: Literal["answer", "investment memo"] = Field(description="Type of output to generate")
         
 
 
@@ -208,7 +208,7 @@ For each user query:
 2. **Map to the appropriate intent type** (single, combination, or comprehensive)
 3. **Set data source flags** (needs_sec_data, needs_market_data, needs_news) accurately
 4. **Extract company name and ticker** from the query
-5. **Create an execution plan** that describes the analysis steps
+5. **Create an execution plan** that describes the analysis steps (answer or investment memo)
 
 ## Critical Rules
 
@@ -228,7 +228,7 @@ Return structured data with:
 - needs_sec_data: boolean
 - needs_market_data: boolean  
 - needs_news: boolean
-- execution_plan: Clear step-by-step plan describing what analysis will be performed
+- execution_plan: answer or investment memo
 
 Be systematic and precise in your analysis."""
 
@@ -255,7 +255,7 @@ async def get_sec_data(ticker: str, query: str = "comprehensive SEC analysis") -
     try:
         search_results = index.query(
             vector=query_embedding,
-            top_k=20,
+            top_k=21,
             include_metadata=True,
             filter={"ticker": ticker.upper()}
         )
@@ -429,26 +429,34 @@ Analyst_Agent = Agent(
 
 # ==================== Main Orchestration ====================
 
-async def generate_investment_memo(user_request: str) -> InvestmentMemo:
+
+async def generate_analysis(user_request: str):
     """
     Main function that orchestrates the entire analysis pipeline
-    
+
+    Flow: User Request → Planner Agent → {Answer Agent | Analyst Agent}
+
     Args:
         user_request: Natural language request like 
-                     "Give me a comprehensive analysis of Apple"
-                     "What's the latest news on Tesla?"
-                     "Analyze Microsoft's financial performance"
+            "Give me a comprehensive analysis of Apple"
+            "What's the latest news on Tesla?"
+            "Analyze Microsoft's financial performance"
     """
     print(f"\n{'='*80}")
-    print(f"INVESTMENT MEMO GENERATOR")
+    print(f"FINANCIAL ANALYSIS ENGINE")
     print(f"{'='*80}")
     print(f"User Request: {user_request}\n")
-    
-    # Step 1: Plan the analysis
-    print("[STEP 1] Planning analysis...")
-    plan_result = await Planner_Agent.run(user_request)
-    intent = plan_result.output
-    
+
+    # ========== STEP 1: Plan the analysis ==========
+    print("[STEP 1] Planning analysis with Planner Agent...")
+    try:
+        plan_result = await Planner_Agent.run(user_request)
+        # Agent run returns an object with `.output` containing the typed result
+        intent = plan_result.output
+    except Exception as e:
+        print(f"[ERROR] Planner Agent failed: {e}")
+        return None
+
     print(f"\n[PLANNER OUTPUT]")
     print(f"  Intent Type: {intent.intent_type}")
     print(f"  Company: {intent.company}")
@@ -456,110 +464,211 @@ async def generate_investment_memo(user_request: str) -> InvestmentMemo:
     print(f"  Needs SEC: {intent.needs_sec_data}")
     print(f"  Needs Market: {intent.needs_market_data}")
     print(f"  Needs News: {intent.needs_news}")
-    print(f"  Plan: {intent.execution_plan}")
-    
-    # Step 2: Gather context based on plan
-    print(f"\n[STEP 2] Gathering context...")
-    context = await gather_context(intent)
-    
-    # Step 3: Generate analysis
-    print(f"\n[STEP 3] Generating investment memo...")
-    
-    # Build context string for analyst
-    context_str = f"""
-Analysis Request: {intent.intent_type.upper()} analysis for {intent.company} ({intent.ticker})
+    print(f"  Execution Plan: {intent.execution_plan}")
 
-Data Sources Used: {', '.join(context.sources_used)}
+    # ========== STEP 2: Gather context based on plan ==========
+    print(f"\n[STEP 2] Gathering context from data sources...")
+    context = await gather_context(intent)
+
+    # ========== STEP 3: Route to appropriate agent ==========
+    print(f"\n[STEP 3] Routing to {intent.execution_plan} pipeline...\n")
+    if intent.execution_plan == "answer":
+        print("[ROUTING] → Answer Agent")
+        return await handle_answer_request(intent, context, user_request)
+
+    elif intent.execution_plan == "investment memo":
+        print("[ROUTING] → Analyst Agent")
+        return await handle_memo_request(intent, context)
+
+    else:
+        print(f"[ERROR] Unknown execution plan: {intent.execution_plan}")
+        return None
+
+
+async def handle_answer_request(intent, context, user_request):
+    """Handle simple answer requests via Answer Agent"""
+    context_str = f"""
+User Question: {user_request}
+
+Company: {intent.company} ({intent.ticker})
+Analysis Type: {intent.intent_type}
+Data Sources Available: {', '.join(context.sources_used)}
 
 """
-    
     if context.sec_data:
-        context_str += f"\n--- SEC FILING DATA ---\n{context.sec_data}\n"
-    
+        context_str += f"\nSEC Filing Data:\n{context.sec_data}\n"
+
     if context.market_data:
-        context_str += f"\n--- MARKET DATA ---\n{context.market_data}\n"
-    
+        context_str += f"\nMarket Data:\n{str(context.market_data)}\n"
+
     if context.news_data:
         news_summary = "\n".join([
             f"- {item['title']}: {item['content']}" 
-            for item in context.news_data.get('news_items', [])
+            for item in context.news_data.get('news_items', [])[:3]
         ])
-        context_str += f"\n--- NEWS DATA ---\n{news_summary}\n"
-    
-    context_str += f"\nCreate a {intent.intent_type} investment memo based on the above context."
-    
-    # Run analyst agent with gathered context
-    memo_result = await Analyst_Agent.run(context_str)
-    memo = memo_result.output
-    
-    # Add metadata about analysis scope
-    memo.analysis_scope = f"{intent.intent_type.capitalize()} analysis using: {', '.join(context.sources_used)}"
-    
-    print(f"\n{'='*80}")
-    print(f"MEMO GENERATION COMPLETE")
-    print(f"{'='*80}\n")
-    
-    return memo
+        context_str += f"\nRecent News:\n{news_summary}\n"
+
+    context_str += f"\nProvide a concise, direct answer to the user's question based on the above data."
+
+    try:
+        answer_result = await Answer_Agent.run(context_str)
+        # use `.output` to access the typed Pydantic result
+        answer = answer_result.output
+
+        print(f"\n{'='*80}")
+        print("ANALYSIS ANSWER")
+        print(f"{'='*80}")
+        print(f"\nCompany: {intent.company} ({intent.ticker})")
+        print(f"Question: {user_request}")
+        print(f"\n{answer.analysis}")
+        print(f"\nData Sources: {', '.join(context.sources_used)}")
+        print("="*80 + "\n")
+
+        return answer
+
+    except Exception as e:
+        print(f"[ERROR] Answer Agent failed: {e}")
+        return None
 
 
-# ==================== Helper Functions ====================
+async def handle_memo_request(intent, context):
+    """Handle investment memo requests via Analyst Agent"""
+    context_str = f"""
+Generate a professional investment memo for:
+Company: {intent.company} ({intent.ticker})
+Analysis Type: {intent.intent_type}
+Data Sources Used: {', '.join(context.sources_used)}
 
-def print_memo(memo: InvestmentMemo):
+"""
+
+    if context.sec_data:
+        context_str += f"--- SEC FILING DATA ---\n"
+        for key, value in context.sec_data.items():
+            context_str += f"{key.replace('_', ' ').title()}: {value}\n"
+        context_str += "\n"
+
+    if context.market_data:
+        context_str += f"--- MARKET DATA ---\n"
+        for key, value in context.market_data.items():
+            context_str += f"{key}: {value}\n"
+        context_str += "\n"
+
+    if context.news_data:
+        context_str += f"--- NEWS DATA ---\n"
+        for item in context.news_data.get('news_items', []):
+            context_str += f"Title: {item['title']}\n"
+            context_str += f"Content: {item['content']}\n"
+            context_str += f"URL: {item['url']}\n\n"
+
+    context_str += f"Create a comprehensive {intent.intent_type} investment memo."
+
+    try:
+        memo_result = await Analyst_Agent.run(context_str)
+        # use `.output` to access the typed Pydantic result
+        memo = memo_result.output
+
+        # Add metadata
+        memo.analysis_scope = f"{intent.intent_type.capitalize()} analysis using: {', '.join(context.sources_used)}"
+
+        print_investment_memo(memo)
+        return memo
+
+    except Exception as e:
+        print(f"[ERROR] Analyst Agent failed: {e}")
+        return None
+
+
+def print_investment_memo(memo):
     """Pretty print the investment memo"""
     print("\n" + "="*80)
     print("INVESTMENT MEMO")
     print("="*80)
-    
+
+    # Executive Summary
     print(f"\n📊 EXECUTIVE SUMMARY")
     print(f"Company: {memo.executive_summary.company}")
     print(f"Recommendation: {memo.executive_summary.recommendation}")
     print(f"Target Price: {memo.executive_summary.target_price}")
     print(f"Time Horizon: {memo.executive_summary.time_horizon}")
     print(f"\nThesis: {memo.executive_summary.thesis_summary}")
-    
+
+    # Key Metrics
     if memo.executive_summary.key_metrics:
         km = memo.executive_summary.key_metrics
         print(f"\n📈 KEY METRICS")
-        print(f"Current Price: ${km.current_price}")
-        print(f"Market Cap: ${km.market_cap:,}" if km.market_cap else "Market Cap: N/A")
-        print(f"P/E Ratio: {km.PE}")
-        print(f"EV/EBITDA: {km.EV_EBITDA}")
-        print(f"P/B Ratio: {km.PB}")
-        print(f"Industry: {km.peer_comparison}")
-    
+        if km.current_price:
+            print(f"  Current Price: ${km.current_price}")
+        if km.market_cap:
+            print(f"  Market Cap: ${km.market_cap:,}")
+        if km.PE:
+            print(f"  P/E Ratio: {km.PE}")
+        if km.EV_EBITDA:
+            print(f"  EV/EBITDA: {km.EV_EBITDA}")
+        if km.PB:
+            print(f"  P/B Ratio: {km.PB}")
+        if km.peer_comparison:
+            print(f"  Industry Context: {km.peer_comparison}")
+
+    # Financial Analysis
     if memo.financial_analysis:
         print(f"\n💰 FINANCIAL ANALYSIS")
-        print(f"Revenue Trends: {memo.financial_analysis.revenue_trends[:200]}...")
-        print(f"Profitability: {memo.financial_analysis.profitability[:200]}...")
-    
+        fa = memo.financial_analysis
+        if fa.revenue_trends:
+            print(f"  Revenue Trends: {fa.revenue_trends}")
+        if fa.profitability:
+            print(f"  Profitability: {fa.profitability}")
+        if fa.cash_flow:
+            print(f"  Cash Flow: {fa.cash_flow}")
+
+    # Company News
     if memo.company_news:
         print(f"\n📰 NEWS & MARKET POSITION")
-        print(f"Summary: {memo.company_news.summary[:200]}...")
-        print(f"Recent Developments: {memo.company_news.recent_developments[:200]}...")
-    
-    print(f"\n⚠️ RISKS")
-    for i, risk in enumerate(memo.risks, 1):
-        print(f"{i}. {risk}")
-    
-    print(f"\n🚀 CATALYSTS")
-    for i, catalyst in enumerate(memo.catalysts, 1):
-        print(f"{i}. {catalyst}")
-    
+        cn = memo.company_news
+        if cn.summary:
+            print(f"  Summary: {cn.summary}")
+        if cn.recent_developments:
+            print(f"  Recent Developments: {cn.recent_developments}")
+
+    # Risks
+    if memo.risks:
+        print(f"\n⚠️  RISKS")
+        for i, risk in enumerate(memo.risks, 1):
+            print(f"  {i}. {risk}")
+
+    # Catalysts
+    if memo.catalysts:
+        print(f"\n🚀 CATALYSTS")
+        for i, catalyst in enumerate(memo.catalysts, 1):
+            print(f"  {i}. {catalyst}")
+
     print(f"\n📋 Analysis Scope: {memo.analysis_scope}")
     print("="*80 + "\n")
 
 
-# ==================== Example Usage ====================
+# ====================  MAIN LOOP ====================
 
 async def main():
+    """Interactive investment analysis engine"""
+
     examples = [
-        "Give me a comprehensive investment analysis of Apple Inc",
-        "What's the latest news and market sentiment on Tesla?",
-        "Analyze Microsoft's financial performance from SEC filings",
-        "What are the key valuation metrics for NVIDIA?",
+    # INVESTMENT MEMO WORKFLOW (trigger "investment memo")
+    "Generate an investment memo for Apple Inc with comprehensive analysis",
+    "Create a full investment memo on AMD including financials, news, and valuation",
+    "Write an investment memo for Starbucks using latest information",
+
+    # ANSWER WORKFLOW (trigger "answer")
+    "What is the current P/E ratio for Microsoft?",
+    "Summarize the latest news about Nvidia's stock",
+    "Compare Apple's market cap with Amazon's",
+    "Is Tesla profitable this quarter?",
+    "Show NVIDIA's year-over-year revenue growth",
+    "What is AMD's current stock price?",
+    "Give sector and industry context for Starbucks stock",
     ]
 
-    print('\nInteractive Investment Memo Generator')
+    print('\n' + "="*80)
+    print('INTERACTIVE INVESTMENT ANALYSIS ENGINE')
+    print("="*80)
     print('Type a natural language request and press Enter.')
     print("Type 'examples' to list example prompts, or 'quit'/'exit' to stop.\n")
 
@@ -570,29 +679,38 @@ async def main():
             print('\nExiting...')
             return
 
+        # Handle empty input
         if not user_input:
             continue
+
+        # Handle exit commands
         if user_input.lower() in ('quit', 'exit'):
             print('Goodbye!')
             return
+
+        # Handle examples list
         if user_input.lower() == 'examples':
-            print('\nExamples:')
+            print('\nExample Prompts:')
             for i, ex in enumerate(examples, 1):
-                print(f" {i}. {ex}")
-            print("\nType the example number to run it, or paste your own request.")
+                print(f"  {i}. {ex}")
+            print("\nType the example number to run it, or paste your own request.\n")
             continue
-        # allow selecting an example by number
+
+        # Handle selecting example by number
         if user_input.isdigit() and 1 <= int(user_input) <= len(examples):
             user_input = examples[int(user_input) - 1]
 
-        # Generate and print memo
-        print(f"\nRunning analysis for: {user_input}\n")
+        # Execute analysis with corrected flow
+        print(f"\nProcessing: {user_input}\n")
         try:
-            memo = await generate_investment_memo(user_input)
-            print_memo(memo)
+            result = await generate_analysis(user_input)
+            if result is None:
+                print("[WARNING] Analysis failed to complete\n")
         except Exception as e:
-            print(f"Error generating memo: {e}")
-        # small pause to avoid tight loop
+            print(f"[ERROR] Unexpected error: {e}\n")
+            import traceback
+            traceback.print_exc()
+
         await asyncio.sleep(0.2)
 
 
