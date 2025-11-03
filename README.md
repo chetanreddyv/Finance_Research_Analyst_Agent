@@ -507,10 +507,6 @@ Contributions welcome! Please:
 3. Add tests for new functionality
 4. Submit pull request with clear description
 
-## License
-
-MIT
-
 ---
 
 **Last Updated**: November 2, 2025
