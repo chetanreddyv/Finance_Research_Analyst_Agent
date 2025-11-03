@@ -14,9 +14,9 @@ from generate_memo_pdf import create_pdf
 load_dotenv()
 
 # API Keys and Configuration
-PINECONE_API_KEY = "xxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Replace with your Pinecone API key
+PINECONE_API_KEY = "xxxxxxxxxxxxx"
+TAVILY_API_KEY = "txxxxxxxxxxx"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-TAVILY_API_KEY = "tvly-dev-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # Replace with your Tavily API key
 INDEX_NAME = "sec-rag"
 # Validate API keys
 api_key = os.getenv("OPENAI_API_KEY")
