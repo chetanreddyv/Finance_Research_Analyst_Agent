@@ -16,7 +16,7 @@ from tqdm import tqdm
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-PINECONE_API_KEY = "xxxxxxxxxxxxx"
+PINECONE_API_KEY = "xxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Replace with your Pinecone API key
 
 
 INDEX_NAME = "sec-rag"

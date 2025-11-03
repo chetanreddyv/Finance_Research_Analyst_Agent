@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 rag_knowledge_base/
 sec-edgar-filings/
+AAPL_comprehensive_memo.pdf

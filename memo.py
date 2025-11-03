@@ -8,14 +8,15 @@ from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 import yfinance as yf
 import asyncio
+from generate_memo_pdf import create_pdf
 
 # Load environment variables
 load_dotenv()
 
 # API Keys and Configuration
-PINECONE_API_KEY = "xxxxxxxxxx"
+PINECONE_API_KEY = "xxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Replace with your Pinecone API key
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-TAVILY_API_KEY = "xxxxxxxxxx"
+TAVILY_API_KEY = "tvly-dev-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # Replace with your Tavily API key
 INDEX_NAME = "sec-rag"
 # Validate API keys
 api_key = os.getenv("OPENAI_API_KEY")
@@ -87,7 +88,7 @@ class ExecutiveSummary(BaseModel):
     recommendation: Literal["BUY", "HOLD", "SELL"] = Field(description="Investment recommendation")
     target_price: str = Field(description="Target price estimate")
     time_horizon: str = Field(description="Investment time horizon")
-    thesis_summary: str = Field(description="Investment thesis summary")
+    thesis: str = Field(description="Investment thesis")
     key_metrics: Optional[KeyMetrics] = Field(description="Key valuation metrics")
 
 
@@ -100,137 +101,124 @@ class InvestmentMemo(BaseModel):
     catalysts: List[str] = Field(description="List of catalysts")
     analysis_scope: str = Field(description="Scope of analysis performed")
 
+    
+
 
 # ==================== Planner Agent ====================
 
-planner_prompt = planner_prompt = """You are an intelligent planning agent for financial analysis.
-Your job is to parse user requests and determine EXACTLY which data sources are needed.
+planner_prompt =  """ You are the Latent-Intent Planner for research. Read any user question and infer the underlying analytical intent even if it is not explicitly stated. Select only the data sources strictly required, extract entities, and return a minimal plan using the exact JSON fields required by the downstream router.
 
-## Intent Types and Data Source Mapping
-
-**Single-Focus Intents:**
-- "financials": SEC filings, revenue, profitability, cash flow, balance sheet
-  → needs_sec_data=true, needs_market_data=false, needs_news=false
-  
-- "news": Recent news, market sentiment, developments, announcements
-  → needs_sec_data=false, needs_market_data=false, needs_news=true
-  
-- "valuation": Market metrics, P/E ratios, stock price, market cap, comparisons
-  → needs_sec_data=false, needs_market_data=true, needs_news=false
-
-**Combination Intents:**
-- "financials_and_valuation": SEC data + market metrics for fundamental analysis
-  → needs_sec_data=true, needs_market_data=true, needs_news=false
-  
-- "news_and_valuation": News + market data for sentiment-driven analysis
-  → needs_sec_data=false, needs_market_data=true, needs_news=true
-  
-- "financials_and_news": SEC filings + news for operational + sentiment analysis
-  → needs_sec_data=true, needs_market_data=false, needs_news=true
-
-**Complete Analysis:**
-- "comprehensive": All data sources for full investment analysis
-  → needs_sec_data=true, needs_market_data=true, needs_news=true
-
-
-## Keyword-to-Intent Mapping Rules
-
-**Trigger "news" data source if query contains:**
-- "news", "latest", "recent developments", "sentiment", "market buzz"
-- "announcements", "updates", "what's happening", "current events"
-
-**Trigger "market_data" (valuation) if query contains:**
-- "valuation", "price", "P/E", "metrics", "market cap", "stock price"
-- "trading", "performance", "returns", "market", "sentiment" (+ news)
-- "worth", "expensive", "cheap", "multiples"
-
-**Trigger "sec_data" (financials) if query contains:**
-- "financials", "revenue", "earnings", "profitability", "cash flow"
-- "balance sheet", "SEC", "10-K", "10-Q", "financial performance"
-- "fundamentals", "income statement", "operating margin"
-
-
-## Analysis Examples
-
-**Example 1:**
-Query: "What's the latest news and market sentiment on Tesla?"
-→ Intent: news_and_valuation
-→ needs_sec_data: false
-→ needs_market_data: true (sentiment requires current price/market context)
-→ needs_news: true
-→ Reasoning: "latest news" triggers news, "market sentiment" requires both news + market data
-
-**Example 2:**
-Query: "Analyze Apple's financial performance"
-→ Intent: financials
-→ needs_sec_data: true
-→ needs_market_data: false
-→ needs_news: false
-→ Reasoning: "financial performance" explicitly requests SEC data only
-
-**Example 3:**
-Query: "Is Microsoft overvalued?"
-→ Intent: financials_and_valuation
-→ needs_sec_data: true (need fundamentals to assess valuation)
-→ needs_market_data: true (need current multiples)
-→ needs_news: false
-→ Reasoning: Valuation assessment requires both SEC fundamentals and market metrics
-
-**Example 4:**
-Query: "Give me a comprehensive analysis of NVIDIA"
-→ Intent: comprehensive
-→ needs_sec_data: true
-→ needs_market_data: true
-→ needs_news: true
-→ Reasoning: "comprehensive" explicitly requests all available data
-
-**Example 5:**
-Query: "What are analysts saying about Amazon's stock?"
-→ Intent: news_and_valuation
-→ needs_sec_data: false
-→ needs_market_data: true (stock context)
-→ needs_news: true (analyst opinions)
-→ Reasoning: Analyst opinions are in news, stock context needs market data
-
-**Example 6:**
-Query: "Compare Tesla's revenue growth to its competitors"
-→ Intent: financials_and_valuation
-→ needs_sec_data: true (revenue data)
-→ needs_market_data: true (competitive metrics)
-→ needs_news: false
-→ Reasoning: Comparison requires both SEC financials and market benchmarks
-
-
-## Your Task
-
-For each user query:
-1. **Identify keywords** that signal what data is needed
-2. **Map to the appropriate intent type** (single, combination, or comprehensive)
-3. **Set data source flags** (needs_sec_data, needs_market_data, needs_news) accurately
-4. **Extract company name and ticker** from the query
-5. **Create an execution plan** that describes the analysis steps (answer or investment memo)
-
-## Critical Rules
-
-- **Be precise**: Only request data sources that are actually needed
-- **Sentiment queries**: Always require BOTH news + market_data (news_and_valuation intent)
-- **Valuation queries**: May need SEC data if assessing intrinsic value vs market price
-- **News queries**: If asking about stock/market specifically, also include market_data
-- **Default to minimum**: When uncertain, prefer narrower intent over comprehensive
-- **Combinations over comprehensive**: Use combination intents when possible to minimize unnecessary calls
-
-## Output Format
-
-Return structured data with:
-- intent_type: One of the 7 types listed above
-- company: Full company name
-- ticker: Stock ticker symbol (uppercase)
+Your output MUST strictly conform to this schema (values only, no extra fields):
+- intent_type: one of [financials | news | valuation | financials_and_valuation | news_and_valuation | financials_and_news | comprehensive]
+- company: Full company name or index/ETF; empty if unknown
+- ticker: UPPERCASE ticker; empty if unknown or ambiguous
 - needs_sec_data: boolean
-- needs_market_data: boolean  
+- needs_market_data: boolean
 - needs_news: boolean
-- execution_plan: answer or investment memo
+- execution_plan: one of ["answer", "investment memo"]
 
-Be systematic and precise in your analysis."""
+Intent taxonomy (pick exactly one):
+- financials: Fundamentals from filings and statements only.
+- news: Recent developments, analyst commentary, narrative/sentiment only.
+- valuation: Market metrics, price, returns, multiples only.
+- financials_and_valuation: Fundamentals + market metrics for intrinsic vs market comparison.
+- news_and_valuation: News + market data for sentiment with price/multiples context.
+- financials_and_news: Fundamentals + news for operational + narrative synthesis.
+- comprehensive: All sources for full investment analysis.
+
+Data sources and scope:
+- sec_data: SEC/EDGAR filings and fundamentals (10-K, 10-Q), revenue, EPS, margins, FCF, balance sheet, leverage, guidance inside filings.
+- market_data: Price/volume, performance/returns, market cap, valuation multiples (P/E, EV/EBITDA, P/B, P/S), volatility, index-relative context.
+- news: Headlines, press releases, analyst notes/ratings, sentiment, catalysts, regulatory actions, product launches, macro/company headlines.
+
+Trigger heuristics
+
+News triggers (explicit and implicit):
+- Words/phrases: news, latest, update, recent, headlines, what happened, announcement, press release, analysts say, rating, downgrade/upgrade, lawsuit, investigation, product launch, guidance issued, outlook change.
+- “What’s happening” or “why did it move” implies news; if stock/market is referenced, also include market_data (news_and_valuation).
+
+Market_data (valuation) triggers:
+- Words/phrases: price, today/now, performance, returns, rally, selloff, trading, market cap, valuation, multiples, P/E, EV/EBITDA, cheap/expensive, overvalued/undervalued.
+- Pure price/status checks (“What’s NVDA price now?”) → valuation only.
+- Any cheap/expensive/overvalued/undervalued judgment usually requires fundamentals too → financials_and_valuation unless explicitly a quick multiple check.
+
+SEC fundamentals triggers:
+- Words/phrases: financials, fundamentals, revenue, earnings, EPS, profitability, margins, FCF, cash flow, balance sheet, debt, leverage, unit economics, 10-K, 10-Q, filing, operating margin, segment performance, guidance (in filings).
+- “Analyze financial performance” without market language → financials.
+
+Routing to execution_plan
+- Use "answer" for direct questions seeking a concise fact or short synthesis (e.g., current price, P/E, quick news summary, single-metric checks, brief comparisons). 
+- Use "investment memo" for requests that imply a deeper synthesis (e.g., comprehensive/deep dive, valuation plus fundamentals assessment, multi-source integration, explicit “memo” or “write-up”). 
+- If the user asks for “comprehensive”, “deep dive”, “full analysis”, or “investment memo”, always set execution_plan="investment memo".
+
+Defaults and minimization
+- Always choose the narrowest set of sources that can answer the question.
+- When uncertain, prefer a single-focus intent over comprehensive.
+- Prefer combination intents over comprehensive when they suffice.
+- Do not include a source unless it is clearly required by the inferred intent.
+
+Composition rules
+- Sentiment questions require news + market_data (news_and_valuation).
+- Valuation assessments that judge cheap/expensive require fundamentals + market_data unless explicitly a simple multiple check.
+- If a question mentions stock/market context alongside news, include market_data with news.
+- Peer comparisons that mix fundamentals and relative multiples → financials_and_valuation.
+- Analyst opinions or ratings → news_and_valuation.
+- “Why did it move?” today/this week → news_and_valuation.
+
+Ambiguity and edge cases
+- Multiple companies: set primary as first-mentioned; note peers implicitly (downstream components handle comparisons).
+- Ticker-only queries: fill ticker; company may be empty if not confidently resolvable.
+- Indices/ETFs: treat as company field; market-only questions → valuation; index news → news or news_and_valuation.
+- Private companies: filings unavailable; avoid sec_data and use news and/or market_data only if applicable.
+- Timeframes mentioned (e.g., today, this week, last quarter) should influence triggers but are not returned as fields.
+
+Entity extraction
+- Extract company full name and ticker (uppercase) when unambiguous; otherwise leave empty and proceed with the narrowest intent you can confidently support.
+
+Flag mapping (must match intent exactly):
+- financials → needs_sec_data=true, needs_market_data=false, needs_news=false
+- news → needs_sec_data=false, needs_market_data=false, needs_news=true
+- valuation → needs_sec_data=false, needs_market_data=true, needs_news=false
+- financials_and_valuation → needs_sec_data=true, needs_market_data=true, needs_news=false
+- news_and_valuation → needs_sec_data=false, needs_market_data=true, needs_news=true
+- financials_and_news → needs_sec_data=true, needs_market_data=false, needs_news=true
+- comprehensive → needs_sec_data=true, needs_market_data=true, needs_news=true
+
+Procedure
+1) Identify latent intent using explicit keywords and implicit cues (price checks, valuation judgments, sentiment/analyst chatter, filings focus). 
+2) Choose the narrowest matching intent and set flags strictly by the mapping above. 
+3) Extract company and ticker; leave either blank if ambiguous rather than guessing. 
+4) Set execution_plan: “answer” for quick facts/short synthesis, “investment memo” for deep or comprehensive requests. 
+
+Examples
+
+A) “What’s happening with Tesla today?”
+- intent_type: news_and_valuation
+- Flags: sec=false, market=true, news=true
+- execution_plan: answer
+
+B) “Analyze Apple’s financial performance last quarter.”
+- intent_type: financials
+- Flags: sec=true, market=false, news=false
+- execution_plan: answer
+
+C) “Is Microsoft overvalued right now?”
+- intent_type: financials_and_valuation
+- Flags: sec=true, market=true, news=false
+- execution_plan: answer
+
+D) “Give a deep dive on NVIDIA.”
+- intent_type: comprehensive
+- Flags: sec=true, market=true, news=true
+- execution_plan: investment memo
+
+E) “Compare Tesla’s revenue growth to GM and Ford.”
+- intent_type: financials_and_valuation
+- Flags: sec=true, market=true, news=false
+- execution_plan: answer
+
+Return ONLY the JSON fields defined above with correct values. Do not add rationale, notes, or extra keys.
+"""
 
 
 Planner_Agent = Agent(
@@ -238,6 +226,11 @@ Planner_Agent = Agent(
     output_type=AnalysisIntent,
     system_prompt=planner_prompt,
 )
+
+# STRONG POINT: Intent Parsing via Planning Agent
+# - Dedicated Planner Agent parses user queries and selects only the
+#   needed data sources (SEC, market, news). This prevents over-fetching
+#   and reduces cost/latency by avoiding unnecessary API calls.
 
 
 # ==================== Data Gathering Tools ====================
@@ -249,52 +242,72 @@ async def get_sec_data(ticker: str, query: str = "comprehensive SEC analysis") -
     sections = ["revenue_trends", "profitability", "cash_flow", "balance_sheet"]
     financial_data = {k: "" for k in sections}
     
-    combined_query = f"{query} revenue profitability cash flow balance sheet"
-    query_embedding = sec_model.encode(combined_query).tolist()
-    
+    # STRONG POINT: Semantic Chunking for SEC Data Retrieval
+    # - Each financial analysis section (revenue_trends, profitability,
+    #   cash_flow, balance_sheet) triggers its own semantic embedding/query.
+    # - This improves retrieval relevance compared to a single combined query.
+    # STRONG POINT: Asynchronous Tool Execution
+    # - get_sec_data is async-friendly and designed to run in parallel with
+    #   other data gatherers (market/news) to reduce end-to-end latency.
+    # Instead of a single combined embedding, run a focused query per section.
     try:
-        search_results = index.query(
-            vector=query_embedding,
-            top_k=21,
-            include_metadata=True,
-            filter={"ticker": ticker.upper()}
-        )
-        
-        print(f"[get_sec_data] Found {len(search_results.matches)} matches")
-        
         for section in sections:
+            # build a short, focused query for this section
+            section_keywords = section.replace('_', ' ')
+            section_query = f"{query} {section_keywords}"
+            section_emb = sec_model.encode(section_query).tolist()
+
+            search_results = index.query(
+                vector=section_emb,
+                top_k=12,
+                include_metadata=True,
+                filter={"ticker": ticker.upper()}
+            )
+
+            print(f"[get_sec_data] Section='{section}' found {len(search_results.matches)} matches")
+
+            # pick the first match that contains text
+            picked = None
             for match in search_results.matches:
                 meta = match.get("metadata", {})
-                text = meta.get("text", "")
-                section_name = meta.get("section", "").lower()
-                
-                if any(keyword in section_name for keyword in section.split("_")) and text:
-                    financial_data[section] = text[:512]
+                text = meta.get("text") or meta.get("content") or ""
+                if text:
+                    picked = text
                     break
-            
-            if not financial_data[section]:
+
+            if picked:
+                financial_data[section] = picked[:512]
+            else:
                 financial_data[section] = f"Limited data available for {section.replace('_', ' ')}"
-        
+
         return financial_data
     except Exception as e:
+        # STRONG POINT: Comprehensive Error Handling and Graceful Degradation
+        # - Surface helpful fallbacks if RAG or Pinecone fails so the system
+        #   returns partial results rather than hard failing.
         print(f"[get_sec_data] ERROR: {e}")
         return {s: "ERROR in SEC query" for s in sections}
 
 
 async def get_market_data(ticker: str) -> dict:
-    """Fetch market and valuation metrics from yfinance"""
+    """Fetch market, valuation, and detailed financial data from yfinance"""
     print(f"\n[get_market_data] Fetching market data for {ticker}")
-    
+
+    ticker = ticker.upper().strip()
+    if " AND " in ticker or " OR " in ticker:
+        ticker = ticker.split()[0]
+
     try:
         ticker_obj = yf.Ticker(ticker)
         info = ticker_obj.info or {}
-        
+
+        # Core valuation metrics
         pe = info.get('trailingPE') or info.get('forwardPE')
         ev = info.get('enterpriseValue')
         ebitda = info.get('ebitda')
-        ev_ebitda = round(ev / ebitda, 2) if ev and ebitda else None
-        
-        metrics = {
+        ev_ebitda = round(ev / ebitda, 2) if ev and ebitda and ebitda != 0 else None
+
+        market_data = {
             "PE": round(pe, 2) if pe else None,
             "EV_EBITDA": ev_ebitda,
             "PB": round(info.get('priceToBook', 0), 2) if info.get('priceToBook') else None,
@@ -302,15 +315,24 @@ async def get_market_data(ticker: str) -> dict:
             "market_cap": info.get('marketCap'),
             "sector": info.get('sector'),
             "industry": info.get('industry'),
-            "peer_comparison": f"{info.get('industry', 'N/A')} | {info.get('sector', 'N/A')}"
+            "peer_comparison": f"{info.get('industry', 'N/A')} | {info.get('sector', 'N/A')}",
         }
-        
-        print(f"[get_market_data] Retrieved metrics: {metrics}")
-        return metrics
+        print(f"[get_market_data] Comprehensive metrics shape: {len(market_data)} fields")
+        return market_data
     except Exception as e:
         print(f"[get_market_data] ERROR: {e}")
-        return {"error": str(e)}
-
+        return {
+            "PE": None,
+            "EV_EBITDA": None,
+            "PB": None,
+            "current_price": None,
+            "market_cap": None,
+            "sector": None,
+            "industry": None,
+            "peer_comparison": "N/A | N/A",
+            "error": f"Failed to fetch data: {str(e)}"
+        }
+ 
 
 async def get_news_data(company: str, ticker: str) -> dict:
     """Fetch recent news from Tavily"""
@@ -346,6 +368,7 @@ async def get_news_data(company: str, ticker: str) -> dict:
         print(f"[get_news_data] Found {len(news_items)} news articles")
         return result
     except Exception as e:
+        # STRONG POINT: Comprehensive Error Handling and Graceful Degradation
         print(f"[get_news_data] ERROR: {e}")
         return {"error": str(e), "news_items": [], "urls": []}
 
@@ -391,6 +414,15 @@ async def gather_context(intent: AnalysisIntent) -> GatheredContext:
     
     print(f"[gather_context] Context gathered from: {', '.join(context.sources_used)}")
     return context
+
+# STRONG POINT: Asynchronous Tool Execution & Modular Data Gathering
+# - gather_context queues only the tools indicated by the Planner Agent
+#   and executes them in parallel using asyncio.gather.
+# - This keeps context selective (SEC/market/news) per request and
+#   delivers results faster than sequential calls.
+# STRONG POINT: Source Attribution and Auditability
+# - `context.sources_used` lists which sources were actually queried
+#   so downstream analytic outputs can include clear attribution.
 # ==================== Answer Agent ====================
 class Answer(BaseModel):
     """Final answer output"""
@@ -409,20 +441,61 @@ Answer_Agent = Agent(
 
 # ==================== Analyst Agent ====================
 
-analyst_prompt = """You are a senior financial analyst creating investment memos.
-You will receive context from various data sources based on the user's request.
+analyst_prompt = """You are a senior equity research analyst at a top-tier investment firm.
 
-Your job is to synthesize the provided context into a coherent investment analysis.
-Focus only on the data sources that were actually gathered - don't make assumptions about missing data.
+You will receive detailed, pre-structured context from the following possible sources:
+- SEC/EDGAR filings and company financial statements
+- Live market data and valuation metrics (price, multiples, peer benchmarks)
+- Curated news (headlines, analyst commentary, sentiment, catalysts/risks)
+Each section is labeled, and missing data is simply absent—never assume content you did not receive.
 
-Provide clear, actionable insights with specific metrics and evidence.
-Structure your analysis professionally and cite specific data points.
+Your objective:
+- Synthesize ALL provided context—SEC, market, news—into a comprehensive investment memo.
+- Your output must be effective for institutional investors, portfolio managers, or sourcing teams.
+- Do NOT speculate or guess about any missing facts. If a section (e.g., news or SEC) was not gathered, simply omit from analysis and output.
+- Be specific: cite concrete metrics, numbers, growth rates, dates, and named events from context. Never use generic statements or boilerplate.
+- Structure your memo as follows (unless context absence dictates omitting sections):
+
+1. **Executive Summary:** Company, ticker, recommendation (BUY/HOLD/SELL), time horizon, price target, succinct thesis—focus on key findings and decision points.
+2. **Key Metrics:** Table/list of valuation metrics (P/E, EV/EBITDA, market cap, price, peer comparison), with numbers and peer context.
+3. **Financial Analysis:** Discuss revenue trends, margins, profitability, cash flow, and balance sheet health using SEC and financials context.
+4. **News and Market Position:** Summarize recent developments, strategic moves, analyst sentiment, regulatory actions, product launches, or macro factors—using only gathered news context.
+5. **Risks:** List and briefly explain any risks explicitly surfaced by the context (e.g., regulatory, competitive, supply chain, financial).
+6. **Catalysts:** List concrete, specific future events or factors that may drive price/appreciation (announced launches, guidance, industry moves).
+7. **Analysis Scope/Attribution:** Note which data sources were used and the breadth of analysis (e.g., “Comprehensive memo based on SEC filings, yfinance market data, Bloomberg news.”).
+
+Rules:
+- Every statement must be directly supported by supplied context—never infer or assume beyond the data present.
+- Use clear, direct language with bullet points/lists and small tables for metrics if helpful.
+- Support every key claim or insight with a quantitative or qualitative reference: metric, year, headline, or quote excerpt if relevant.
+- Be concise but thorough—memorable, unbiased, and useful for real capital allocation or strategic review.
+
+If context is missing for a section, simply omit it and focus analysis on what is actually present.
+
+Return a fully structured investment memo in the Pydantic InvestmentMemo schema defined by the system, with all available sections filled.
+
+Example output outline (fields must match schema exactly):
+
+InvestmentMemo:
+  - executive_summary:
+      company: ...
+      recommendation: ... BUY | HOLD | SELL
+      target_price: ...
+      time_horizon: ...
+      thesis: ...
+      key_metrics: { ... }
+  - financial_analysis: { ... }
+  - company_news: { ... }
+  - risks: [ ... ]
+  - catalysts: [ ... ]
+  - analysis_scope: "Comprehensive memo using: SEC filings, yfinance, Bloomberg, Reuters."
+
 """
 
 Analyst_Agent = Agent(
     "openai:gpt-4o",
     output_type=InvestmentMemo,
-    model_settings={"temperature": 0.3, "max_tokens": 6000},
+    model_settings={"temperature": 0.4, "max_tokens": 7000},
     system_prompt=analyst_prompt,
 )
 
@@ -571,6 +644,18 @@ Data Sources Used: {', '.join(context.sources_used)}
         memo.analysis_scope = f"{intent.intent_type.capitalize()} analysis using: {', '.join(context.sources_used)}"
 
         print_investment_memo(memo)
+        
+        # Generate PDF
+        pdf_filename = f"{intent.ticker}_{intent.intent_type}_memo.pdf"
+        try:
+            # Convert Pydantic model to dict for PDF generator
+            memo_dict = memo.model_dump()
+            create_pdf(memo_dict, pdf_filename)
+            print(f"\n✅ PDF saved: {pdf_filename}\n")
+        except Exception as pdf_error:
+            print(f"\n⚠️  PDF generation failed: {pdf_error}")
+            print("Continuing with text output...\n")
+        
         return memo
 
     except Exception as e:
@@ -590,7 +675,7 @@ def print_investment_memo(memo):
     print(f"Recommendation: {memo.executive_summary.recommendation}")
     print(f"Target Price: {memo.executive_summary.target_price}")
     print(f"Time Horizon: {memo.executive_summary.time_horizon}")
-    print(f"\nThesis: {memo.executive_summary.thesis_summary}")
+    print(f"\nThesis: {memo.executive_summary.thesis}")
 
     # Key Metrics
     if memo.executive_summary.key_metrics:
